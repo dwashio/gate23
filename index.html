@@ -1021,11 +1021,30 @@ const YOURFLIGHT = ['SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjYyLjEyLjEwMAAAAAAAAAAAAAA
 const audio = {
   ready: false, ac: null, master: null,
   wallaGain: null, musicGain: null, annGain: null, jetGain: null, rainGain: null, duck: null,
-  buffers: [], yfExtra: null, lastAnn: -1,
+  buffers: [], yfExtra: null, lastAnn: -1, mediaEl: null,
 
   init() {
     const ac = this.ac = new (window.AudioContext || window.webkitAudioContext)();
-    this.master = ac.createGain(); this.master.connect(ac.destination);
+    this.master = ac.createGain();
+    // route output through an <audio> element (MediaStream): mobile browsers then
+    // treat the page like a music player — background playback + lock screen controls
+    try {
+      const dest = ac.createMediaStreamDestination();
+      this.master.connect(dest);
+      const aEl = this.mediaEl = new Audio();
+      aEl.srcObject = dest.stream;
+      aEl.setAttribute('playsinline', '');
+      aEl.play().catch(() => { this.master.connect(ac.destination); });
+    } catch (e) {
+      this.master.connect(ac.destination);
+    }
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: 'GATE 23', artist: 'airport lounge ambience' });
+        navigator.mediaSession.setActionHandler('play', () => { this.ac.resume(); this.mediaEl && this.mediaEl.play(); });
+        navigator.mediaSession.setActionHandler('pause', () => { this.ac.suspend(); });
+      } catch (e) {}
+    }
     this.duck = ac.createGain(); this.duck.connect(this.master);
 
     // crowd
@@ -1256,6 +1275,15 @@ function flightTick() {
   } else if (Date.now() > f.clearAt) clearFlight();
   updateFlightUI();
 }
+
+// wake the audio graph whenever we come back from background or get any tap
+function wakeAudio() {
+  if (!audio.ready) return;
+  if (audio.ac.state !== 'running') audio.ac.resume().catch(() => {});
+  if (audio.mediaEl && audio.mediaEl.paused) audio.mediaEl.play().catch(() => {});
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) wakeAudio(); });
+document.addEventListener('pointerdown', wakeAudio);
 
 document.getElementById('overlay').addEventListener('click', () => {
   const ov = document.getElementById('overlay');
